@@ -37,8 +37,10 @@ class pxTexture;
 class pxTextureNative
 {
 public:
-  virtual pxError bindGLTexture(int tLoc) = 0;
-  virtual pxError bindGLTextureAsMask(int mLoc) = 0;
+  virtual pxError bindGLTexture() = 0;
+  virtual pxError bindGLTextureAsMask() = 0;
+  virtual pxError setGLTextureFilter(GLenum filterMin, GLenum filterMag) = 0;
+  virtual pxError setGLTextureWrap(GLenum wrapS, GLenum wrapT) = 0;
 };
 
 
@@ -46,7 +48,7 @@ class pxTexture: public pxTextureNative
 {
 public:
   pxTexture() : mRef(0), mTextureType(PX_TEXTURE_UNKNOWN), mPremultipliedAlpha(false), mLastRenderTick(0),
-                mDownscaleSmooth(false)
+                mDownscaleSmooth(false), mWrapS(GL_INVALID_ENUM), mWrapT(GL_INVALID_ENUM)
   { }
   virtual ~pxTexture() {}
 
@@ -90,6 +92,10 @@ protected:
   bool mPremultipliedAlpha;
   uint32_t mLastRenderTick;
   bool mDownscaleSmooth;
+  GLenum mFilterMin;
+  GLenum mFilterMag;
+  GLenum mWrapS;
+  GLenum mWrapT;
 };
 
 typedef rtRef<pxTexture> pxTextureRef;

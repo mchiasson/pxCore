@@ -55,12 +55,17 @@
 #endif //PX_PLATFORM_WAYLAND_EGL
 #endif
 
+#include <cfloat>
+
 #ifndef RUNINMAIN
 #include "pxContextUtils.h"
 #endif //RUNINMAIN
 
 #define PX_TEXTURE_MIN_FILTER GL_LINEAR
 #define PX_TEXTURE_MAG_FILTER GL_LINEAR
+
+GLenum g_currentActiveTexture = GL_TEXTURE0;
+GLuint g_currentBoundTexture = 0;
 
 
 ////////////////////////////////////////////////////////////////
@@ -312,15 +317,16 @@ public:
     glGenFramebuffers(1, &mFramebufferId);
     glGenTextures(1, &mTextureId);
 
-    glBindTexture(GL_TEXTURE_2D, mTextureId); TRACK_TEX_CALLS();
+    if (g_currentBoundTexture != mTextureId) {
+        g_currentBoundTexture = mTextureId;
+        glBindTexture(GL_TEXTURE_2D, mTextureId); TRACK_TEX_CALLS();
+    }
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
                  mWidth, mHeight, 0, GL_RGBA,
                  GL_UNSIGNED_BYTE, NULL);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, PX_TEXTURE_MIN_FILTER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, PX_TEXTURE_MAG_FILTER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    setGLTextureFilter(PX_TEXTURE_MIN_FILTER, PX_TEXTURE_MAG_FILTER);
+    setGLTextureWrap(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
     context.adjustCurrentTextureMemorySize(mWidth*mHeight*4);
     mBindTexture = true;
   }
@@ -413,42 +419,89 @@ public:
       }
       mBindTexture = false;
     }
-    //glActiveTexture(GL_TEXTURE3);
+    //if (g_currentActiveTexture != GL_TEXTURE3) {glActiveTexture(GL_TEXTURE3); g_currentActiveTexture = GL_TEXTURE3}
     //glBindTexture(GL_TEXTURE_2D, mTextureId);
-    glViewport ( 0, 0, mWidth, mHeight);
-    gResW = mWidth;
-    gResH = mHeight;
+    if (gResW != mWidth || gResH != mHeight)
+    {
+        glViewport ( 0, 0, mWidth, mHeight);
+        gResW = mWidth;
+        gResH = mHeight;
+    }
 
     return PX_OK;
   }
 
   // TODO get rid of pxError
   // TODO get rid of bindTexture() and bindTextureAsMask()
-  virtual pxError bindGLTexture(int tLoc)
+  virtual pxError bindGLTexture()
   {
     if (mFramebufferId == 0 || mTextureId == 0)
       return PX_NOTINITIALIZED;
 
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, mTextureId);  TRACK_TEX_CALLS();
-    glUniform1i(tLoc,1);
+    if (g_currentActiveTexture != GL_TEXTURE1) {glActiveTexture(GL_TEXTURE1); g_currentActiveTexture = GL_TEXTURE1;}
+    if (g_currentBoundTexture != mTextureId) {
+        g_currentBoundTexture = mTextureId;
+        glBindTexture(GL_TEXTURE_2D, mTextureId);  TRACK_TEX_CALLS();
+    }
 
     return PX_OK;
   }
 
-  virtual pxError bindGLTextureAsMask(int mLoc)
+  virtual pxError bindGLTextureAsMask()
   {
     if (mFramebufferId == 0 || mTextureId == 0)
     {
       return PX_NOTINITIALIZED;
     }
 
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, mTextureId);   TRACK_TEX_CALLS();
+    if (g_currentActiveTexture != GL_TEXTURE2) {glActiveTexture(GL_TEXTURE2); g_currentActiveTexture = GL_TEXTURE2;}
+    if (g_currentBoundTexture != mTextureId) {
+        g_currentBoundTexture = mTextureId;
+        glBindTexture(GL_TEXTURE_2D, mTextureId);   TRACK_TEX_CALLS();
+    }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-    glUniform1i(mLoc, 2);
     return PX_OK;
+  }
+
+  virtual pxError setGLTextureFilter(GLenum filterMin, GLenum filterMag)
+  {
+      if (g_currentBoundTexture == mTextureId)
+      {
+          if (mFilterMin != filterMin)
+          {
+              mFilterMin = filterMin;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filterMin);
+          }
+
+          if (mFilterMag != filterMag)
+          {
+              mFilterMag = filterMag;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filterMag);
+          }
+          return PX_OK;
+      }
+      return PX_FAIL;
+  }
+
+  virtual pxError setGLTextureWrap(GLenum wrapS, GLenum wrapT)
+  {
+      if (g_currentBoundTexture == mTextureId)
+      {
+          if (mWrapS != wrapS)
+          {
+              mWrapS = wrapS;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS);
+          }
+
+          if (mWrapT != wrapT)
+          {
+              mWrapT = wrapT;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT);
+          }
+          return PX_OK;
+      }
+      return PX_FAIL;
   }
 
 #if 1 // Do we need this?  maybe for some debugging use case??
@@ -489,8 +542,10 @@ public:
   virtual pxError deleteTexture()                     { return PX_FAIL; }
   virtual pxError resizeTexture(int /*w*/, int /*h*/) { return PX_FAIL; }
   virtual pxError getOffscreen(pxOffscreen& /*o*/)    { return PX_FAIL; }
-  virtual pxError bindGLTexture(int /*tLoc*/)         { return PX_FAIL; }
-  virtual pxError bindGLTextureAsMask(int /*mLoc*/)   { return PX_FAIL; }
+  virtual pxError bindGLTexture()                     { return PX_FAIL; }
+  virtual pxError bindGLTextureAsMask()               { return PX_FAIL; }
+  virtual pxError setGLTextureFilter(GLenum /*filterMin*/, GLenum /*filterMag*/) {return PX_FAIL; }
+  virtual pxError setGLTextureWrap(GLenum /*wrapS*/, GLenum /*wrapT*/) { return PX_FAIL;}
 
 };// CLASS - pxTextureNone
 
@@ -677,7 +732,7 @@ public:
     return PX_OK;
   }
 
-  virtual pxError bindGLTexture(int tLoc)
+  virtual pxError bindGLTexture()
   {
     if (!mInitialized)
     {
@@ -685,9 +740,7 @@ public:
       return PX_NOTINITIALIZED;
     }
 
-
-    glActiveTexture(GL_TEXTURE1);
-
+    if (g_currentActiveTexture != GL_TEXTURE1) {glActiveTexture(GL_TEXTURE1); g_currentActiveTexture = GL_TEXTURE1;}
 
 // TODO would be nice to do the upload in createTexture but right now it's getting called on wrong thread
     if (!mTextureUploaded)
@@ -710,11 +763,12 @@ public:
         }
       }
       glGenTextures(1, &mTextureName);
+      g_currentBoundTexture = mTextureName;
       glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, PX_TEXTURE_MIN_FILTER);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, PX_TEXTURE_MAG_FILTER);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+      setGLTextureFilter(mDownscaleSmooth ? GL_LINEAR_MIPMAP_LINEAR : PX_TEXTURE_MIN_FILTER,
+                         PX_TEXTURE_MAG_FILTER);
+      setGLTextureWrap(GL_REPEAT, GL_REPEAT);
 
       glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
       glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
@@ -722,7 +776,6 @@ public:
                    GL_UNSIGNED_BYTE, mOffscreen.base());
       if (mDownscaleSmooth)
       {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glGenerateMipmap(GL_TEXTURE_2D);
         mMipmapCreated = true;
       }
@@ -733,20 +786,22 @@ public:
     }
     else
     {
-      glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
+      if (g_currentBoundTexture != mTextureName) {
+        g_currentBoundTexture = mTextureName;
+        glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
+      }
       if (mDownscaleSmooth && !mMipmapCreated)
       {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        setGLTextureFilter(GL_LINEAR_MIPMAP_LINEAR, mFilterMag);
         glGenerateMipmap(GL_TEXTURE_2D);
         mMipmapCreated = true;
       }
     }
 
-    glUniform1i(tLoc, 1);
     return PX_OK;
   }
 
-  virtual pxError bindGLTextureAsMask(int mLoc)
+  virtual pxError bindGLTextureAsMask()
   {
     if (!mInitialized)
     {
@@ -754,7 +809,7 @@ public:
       return PX_NOTINITIALIZED;
     }
 
-    glActiveTexture(GL_TEXTURE2);
+    if (g_currentActiveTexture != GL_TEXTURE2) {glActiveTexture(GL_TEXTURE2); g_currentActiveTexture = GL_TEXTURE2;}
 
     if (!mTextureUploaded)
     {
@@ -776,11 +831,10 @@ public:
         }
       }
       glGenTextures(1, &mTextureName);
+      g_currentActiveTexture = mTextureName;
       glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, PX_TEXTURE_MIN_FILTER);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, PX_TEXTURE_MAG_FILTER);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+      setGLTextureFilter(PX_TEXTURE_MIN_FILTER, PX_TEXTURE_MAG_FILTER);
+      setGLTextureWrap(GL_REPEAT, GL_REPEAT);
       glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
       glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
                    mOffscreen.width(), mOffscreen.height(), 0, GL_RGBA,
@@ -793,12 +847,53 @@ public:
     }
     else
     {
-      glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
+        if (g_currentBoundTexture != mTextureName) {
+            g_currentBoundTexture = mTextureName;
+            glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
+        }
     }
 
-    glUniform1i(mLoc, 2);
-
     return PX_OK;
+  }
+
+  virtual pxError setGLTextureFilter(GLenum filterMin, GLenum filterMag)
+  {
+      if (g_currentBoundTexture == mTextureName)
+      {
+          if (mFilterMin != filterMin)
+          {
+              mFilterMin = filterMin;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filterMin);
+          }
+
+          if (mFilterMag != filterMag)
+          {
+              mFilterMag = filterMag;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filterMag);
+          }
+          return PX_OK;
+      }
+      return PX_FAIL;
+  }
+
+  virtual pxError setGLTextureWrap(GLenum wrapS, GLenum wrapT)
+  {
+      if (g_currentBoundTexture == mTextureName)
+      {
+          if (mWrapS != wrapS)
+          {
+              mWrapS = wrapS;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS);
+          }
+
+          if (mWrapT != wrapT)
+          {
+              mWrapT = wrapT;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT);
+          }
+          return PX_OK;
+      }
+      return PX_FAIL;
   }
 
   virtual pxError getOffscreen(pxOffscreen& o)
@@ -959,7 +1054,10 @@ public:
     
     if (mTextureName != 0)
     {
-      glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
+        if (g_currentBoundTexture != mTextureName) {
+            g_currentBoundTexture = mTextureName;
+            glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
+        }
  
 //      int f = mOffscreen.width();
 //      
@@ -987,7 +1085,7 @@ public:
   virtual inline int width()                        { return mWidth;  };
   virtual inline int height()                       { return mHeight; };
   virtual pxError getOffscreen(pxOffscreen& /*o*/)  { return PX_FAIL; };
-  virtual pxError bindGLTextureAsMask(int /*mLoc*/) { return PX_FAIL; };
+  virtual pxError bindGLTextureAsMask()             { return PX_FAIL; };
 
   virtual pxError deleteTexture()
   {
@@ -1002,9 +1100,9 @@ public:
     return PX_OK;
   }
   
-  virtual pxError bindGLTexture(int tLoc)
+  virtual pxError bindGLTexture()
   {
-    glActiveTexture(GL_TEXTURE1);
+    if (g_currentActiveTexture != GL_TEXTURE1) {glActiveTexture(GL_TEXTURE1); g_currentActiveTexture = GL_TEXTURE1;}
     
     if (!mRasterTextureCreated)
     {
@@ -1027,12 +1125,11 @@ public:
       }
       
       glGenTextures(1, &mTextureName);
+      g_currentActiveTexture = mTextureName;
       glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
       
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, PX_TEXTURE_MIN_FILTER);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, PX_TEXTURE_MAG_FILTER);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+      setGLTextureFilter(PX_TEXTURE_MIN_FILTER, PX_TEXTURE_MAG_FILTER);
+      setGLTextureWrap(GL_REPEAT, GL_REPEAT);
       
       glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
       glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, mWidth, mHeight, 0, GL_RGBA,
@@ -1045,13 +1142,55 @@ public:
     }
     else
     {
-      glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
+        if (g_currentBoundTexture != mTextureName) {
+            g_currentBoundTexture = mTextureName;
+            glBindTexture(GL_TEXTURE_2D, mTextureName);   TRACK_TEX_CALLS();
+        }
     }
     
     mInitialized = true;
     
-    glUniform1i(tLoc, 1);
     return PX_OK;
+  }
+
+  virtual pxError setGLTextureFilter(GLenum filterMin, GLenum filterMag)
+  {
+      if (g_currentBoundTexture == mTextureName)
+      {
+          if (mFilterMin != filterMin)
+          {
+              mFilterMin = filterMin;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filterMin);
+          }
+
+          if (mFilterMag != filterMag)
+          {
+              mFilterMag = filterMag;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filterMag);
+          }
+          return PX_OK;
+      }
+      return PX_FAIL;
+  }
+
+  virtual pxError setGLTextureWrap(GLenum wrapS, GLenum wrapT)
+  {
+      if (g_currentBoundTexture == mTextureName)
+      {
+          if (mWrapS != wrapS)
+          {
+              mWrapS = wrapS;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS);
+          }
+
+          if (mWrapT != wrapT)
+          {
+              mWrapT = wrapT;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT);
+          }
+          return PX_OK;
+      }
+      return PX_FAIL;
   }
 
 private:
@@ -1210,12 +1349,14 @@ public:
     mImageWidth  = iw;
     mImageHeight = ih;
 
-//    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, mTextureId);   TRACK_TEX_CALLS();
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, PX_TEXTURE_MIN_FILTER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, PX_TEXTURE_MAG_FILTER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+//        if (g_currentActiveTexture != GL_TEXTURE1) {glActiveTexture(GL_TEXTURE1); g_currentActiveTexture = GL_TEXTURE1;}
+    if (g_currentBoundTexture != mTextureId) {
+        g_currentBoundTexture = mTextureId;
+        glBindTexture(GL_TEXTURE_2D, mTextureId);   TRACK_TEX_CALLS();
+    }
+
+    setGLTextureFilter(PX_TEXTURE_MIN_FILTER, PX_TEXTURE_MAG_FILTER);
+    setGLTextureWrap(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(
       GL_TEXTURE_2D,
@@ -1245,7 +1386,7 @@ public:
     return PX_OK;
   }
 
-  virtual pxError bindGLTexture(int tLoc)
+  virtual pxError bindGLTexture()
   {
     // TODO Moved to here because of js threading issues
     if (!mInitialized) createAlphaTexture(mDrawWidth,mDrawHeight,mImageWidth,mImageHeight);
@@ -1254,27 +1395,70 @@ public:
       return PX_NOTINITIALIZED;
     }
 
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, mTextureId);   TRACK_TEX_CALLS();
-    glUniform1i(tLoc, 1);
+    if (g_currentActiveTexture != GL_TEXTURE1) {glActiveTexture(GL_TEXTURE1); g_currentActiveTexture = GL_TEXTURE1;}
+    if (g_currentBoundTexture != mTextureId) {
+        g_currentBoundTexture = mTextureId;
+        glBindTexture(GL_TEXTURE_2D, mTextureId);   TRACK_TEX_CALLS();
+    }
 
     return PX_OK;
   }
 
-  virtual pxError bindGLTextureAsMask(int mLoc)
+  virtual pxError bindGLTextureAsMask()
   {
     if (!mInitialized)
     {
       return PX_NOTINITIALIZED;
     }
 
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, mTextureId);   TRACK_TEX_CALLS();
+    if (g_currentActiveTexture != GL_TEXTURE2) {glActiveTexture(GL_TEXTURE2); g_currentActiveTexture = GL_TEXTURE2;}
+    if (g_currentBoundTexture != mTextureId) {
+        g_currentBoundTexture = mTextureId;
+        glBindTexture(GL_TEXTURE_2D, mTextureId);   TRACK_TEX_CALLS();
+    }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-    glUniform1i(mLoc, 2);
-
     return PX_OK;
+  }
+
+  virtual pxError setGLTextureFilter(GLenum filterMin, GLenum filterMag)
+  {
+      if (g_currentBoundTexture == mTextureId)
+      {
+          if (mFilterMin != filterMin)
+          {
+              mFilterMin = filterMin;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filterMin);
+          }
+
+          if (mFilterMag != filterMag)
+          {
+              mFilterMag = filterMag;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filterMag);
+          }
+          return PX_OK;
+      }
+      return PX_FAIL;
+  }
+
+  virtual pxError setGLTextureWrap(GLenum wrapS, GLenum wrapT)
+  {
+      if (g_currentBoundTexture == mTextureId)
+      {
+          if (mWrapS != wrapS)
+          {
+              mWrapS = wrapS;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS);
+          }
+
+          if (mWrapT != wrapT)
+          {
+              mWrapT = wrapT;
+              glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT);
+          }
+          return PX_OK;
+      }
+      return PX_FAIL;
   }
 
   virtual pxError getOffscreen(pxOffscreen& /*o*/)
@@ -1427,6 +1611,8 @@ protected:
     mUVLoc = 1;
     glBindAttribLocation(mProgram, mPosLoc, "pos");
     glBindAttribLocation(mProgram, mUVLoc, "uv");
+    glEnableVertexAttribArray(mPosLoc);
+    glEnableVertexAttribArray(mUVLoc);
   }
 
   virtual void postlink()
@@ -1435,6 +1621,10 @@ protected:
     mMatrixLoc = getUniformLocation("amymatrix");
     mColorLoc = getUniformLocation("a_color");
     mAlphaLoc = getUniformLocation("u_alpha");
+
+    mResW = 0;
+    mResH = 0;
+    mAlpha = 0;
   }
 
 public:
@@ -1448,16 +1638,23 @@ public:
     {
       use();
       currentGLProgram = PROGRAM_SOLID_SHADER;
+      glVertexAttribPointer(mPosLoc, 2, GL_FLOAT, GL_FALSE, 0, pos);
     }
-    glUniform2f(mResolutionLoc, resW, resH);
+    if (mResW != resW || mResH != resH)
+    {
+        mResW = resW;
+        mResH = resH;
+        glUniform2f(mResolutionLoc, resW, resH);
+    }
     glUniformMatrix4fv(mMatrixLoc, 1, GL_FALSE, matrix);
-    glUniform1f(mAlphaLoc, alpha);
+    if (mAlpha != alpha)
+    {
+        mAlpha = alpha;
+        glUniform1f(mAlphaLoc, alpha);
+    }
     glUniform4fv(mColorLoc, 1, color);
 
-    glVertexAttribPointer(mPosLoc, 2, GL_FLOAT, GL_FALSE, 0, pos);
-    glEnableVertexAttribArray(mPosLoc);
-    glDrawArrays(mode, 0, count);  ;
-    glDisableVertexAttribArray(mPosLoc);
+    glDrawArrays(mode, 0, count);
 
     return PX_OK;
   }
@@ -1471,6 +1668,10 @@ private:
 
   GLint mColorLoc;
   GLint mAlphaLoc;
+
+  int mResW;
+  int mResH;
+  float mAlpha;
 
 }; //CLASS - solidShaderProgram
 
@@ -1487,6 +1688,8 @@ protected:
     mUVLoc = 1;
     glBindAttribLocation(mProgram, mPosLoc, "pos");
     glBindAttribLocation(mProgram, mUVLoc, "uv");
+    glEnableVertexAttribArray(mPosLoc);
+    glEnableVertexAttribArray(mUVLoc);
   }
 
   virtual void postlink()
@@ -1496,6 +1699,11 @@ protected:
     mColorLoc = getUniformLocation("a_color");
     mAlphaLoc = getUniformLocation("u_alpha");
     mTextureLoc = getUniformLocation("s_texture");
+
+    mResW = 0;
+    mResH = 0;
+    mAlpha = 0;
+    mTexture = 0;
   }
 
 public:
@@ -1510,24 +1718,35 @@ public:
     {
       use();
       currentGLProgram = PROGRAM_A_TEXTURE_SHADER;
+      glVertexAttribPointer(mPosLoc, 2, GL_FLOAT, GL_FALSE, 0, pos);
+      glVertexAttribPointer(mUVLoc, 2, GL_FLOAT, GL_FALSE, 0, uv);
     }
-    glUniform2f(mResolutionLoc, resW, resH);
+    if (mResW != resW || mResH != resH)
+    {
+        mResW = resW;
+        mResH = resH;
+        glUniform2f(mResolutionLoc, resW, resH);
+    }
     glUniformMatrix4fv(mMatrixLoc, 1, GL_FALSE, matrix);
-    glUniform1f(mAlphaLoc, alpha);
+    if (mAlpha != alpha)
+    {
+        mAlpha = alpha;
+        glUniform1f(mAlphaLoc, alpha);
+    }
     glUniform4fv(mColorLoc, 1, color);
 
-    if (texture->bindGLTexture(mTextureLoc) != PX_OK)
+    if (mTexture != 1)
+    {
+        mTexture = 1;
+        glUniform1i(mTextureLoc, mTexture);
+    }
+
+    if (texture->bindGLTexture() != PX_OK)
     {
       return PX_FAIL;
     }
 
-    glVertexAttribPointer(mPosLoc, 2, GL_FLOAT, GL_FALSE, 0, pos);
-    glVertexAttribPointer(mUVLoc, 2, GL_FLOAT, GL_FALSE, 0, uv);
-    glEnableVertexAttribArray(mPosLoc);
-    glEnableVertexAttribArray(mUVLoc);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, count);  TRACK_DRAW_CALLS();
-    glDisableVertexAttribArray(mPosLoc);
-    glDisableVertexAttribArray(mUVLoc);
 
     return PX_OK;
   }
@@ -1544,6 +1763,11 @@ private:
 
   GLint mTextureLoc;
 
+  int mResW;
+  int mResH;
+  float mAlpha;
+  int mTexture;
+
 }; //CLASS - aTextureShaderProgram
 
 aTextureShaderProgram *gATextureShader = NULL;
@@ -1559,6 +1783,8 @@ protected:
     mUVLoc = 1;
     glBindAttribLocation(mProgram, mPosLoc, "pos");
     glBindAttribLocation(mProgram, mUVLoc, "uv");
+    glEnableVertexAttribArray(mPosLoc);
+    glEnableVertexAttribArray(mUVLoc);
   }
 
   virtual void postlink()
@@ -1567,6 +1793,11 @@ protected:
     mMatrixLoc = getUniformLocation("amymatrix");
     mAlphaLoc = getUniformLocation("u_alpha");
     mTextureLoc = getUniformLocation("s_texture");
+
+    mResW = 0;
+    mResH = 0;
+    mAlpha = 0;
+    mTexture = 0;
   }
 
 public:
@@ -1580,28 +1811,37 @@ public:
     {
       use();
       currentGLProgram = PROGRAM_TEXTURE_SHADER;
+      glVertexAttribPointer(mPosLoc, 2, GL_FLOAT, GL_FALSE, 0, pos);
+      glVertexAttribPointer(mUVLoc, 2, GL_FLOAT, GL_FALSE, 0, uv);
     }
-    glUniform2f(mResolutionLoc, resW, resH);
+    if (mResW != resW || mResH != resH)
+    {
+        mResW = resW;
+        mResH = resH;
+        glUniform2f(mResolutionLoc, resW, resH);
+    }
     glUniformMatrix4fv(mMatrixLoc, 1, GL_FALSE, matrix);
-    glUniform1f(mAlphaLoc, alpha);
+    if (mAlpha != alpha)
+    {
+        mAlpha = alpha;
+        glUniform1f(mAlphaLoc, alpha);
+    }
 
-    if (texture->bindGLTexture(mTextureLoc) != PX_OK)
+    if (mTexture != 1)
+    {
+        mTexture = 1;
+        glUniform1i(mTextureLoc, mTexture);
+    }
+
+    if (texture->bindGLTexture() != PX_OK)
     {
       return PX_FAIL;
     }
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
-		    (stretchX==pxConstantsStretch::REPEAT)?GL_REPEAT:GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
-		    (stretchY==pxConstantsStretch::REPEAT)?GL_REPEAT:GL_CLAMP_TO_EDGE);
+    texture->setGLTextureWrap((stretchX == pxConstantsStretch::REPEAT) ? GL_REPEAT : GL_CLAMP_TO_EDGE,
+                              (stretchY == pxConstantsStretch::REPEAT) ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 
-    glVertexAttribPointer(mPosLoc, 2, GL_FLOAT, GL_FALSE, 0, pos);
-    glVertexAttribPointer(mUVLoc, 2, GL_FLOAT, GL_FALSE, 0, uv);
-    glEnableVertexAttribArray(mPosLoc);
-    glEnableVertexAttribArray(mUVLoc);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, count);  TRACK_DRAW_CALLS();
-    glDisableVertexAttribArray(mPosLoc);
-    glDisableVertexAttribArray(mUVLoc);
 
     return PX_OK;
   }
@@ -1616,6 +1856,11 @@ private:
   GLint mAlphaLoc;
 
   GLint mTextureLoc;
+
+  int mResW;
+  int mResH;
+  float mAlpha;
+  int mTexture;
 
 }; //CLASS - textureShaderProgram
 
@@ -1632,6 +1877,8 @@ protected:
     mUVLoc = 1;
     glBindAttribLocation(mProgram, mPosLoc, "pos");
     glBindAttribLocation(mProgram, mUVLoc, "uv");
+    glEnableVertexAttribArray(mPosLoc);
+    glEnableVertexAttribArray(mUVLoc);
   }
 
   virtual void postlink()
@@ -1641,6 +1888,12 @@ protected:
     mAlphaLoc = getUniformLocation("u_alpha");
     mTextureLoc = getUniformLocation("s_texture");
     mMaskLoc = getUniformLocation("s_mask");
+
+    mResW = 0;
+    mResH = 0;
+    mAlpha = 0;
+    mTexture = 0;
+    mMask = 0;
   }
 
 public:
@@ -1655,32 +1908,48 @@ public:
     {
       use();
       currentGLProgram = PROGRAM_TEXTURE_MASKED_SHADER;
+      glVertexAttribPointer(mPosLoc, 2, GL_FLOAT, GL_FALSE, 0, pos);
+      glVertexAttribPointer(mUVLoc, 2, GL_FLOAT, GL_FALSE, 0, uv);
     }
-    glUniform2f(mResolutionLoc, resW, resH);
+    if (mResW != resW || mResH != resH)
+    {
+        mResW = resW;
+        mResH = resH;
+        glUniform2f(mResolutionLoc, resW, resH);
+    }
     glUniformMatrix4fv(mMatrixLoc, 1, GL_FALSE, matrix);
-    glUniform1f(mAlphaLoc, alpha);
+    if (mAlpha != alpha)
+    {
+        mAlpha = alpha;
+        glUniform1f(mAlphaLoc, alpha);
+    }
 
-    if (texture->bindGLTexture(mTextureLoc) != PX_OK)
+    if (mTexture != 1)
+    {
+        mTexture = 1;
+        glUniform1i(mTextureLoc, mTexture);
+    }
+
+    if (mMask != 2)
+    {
+        mMask = 2;
+        glUniform1i(mMaskLoc, mMask);
+    }
+
+    if (texture->bindGLTexture() != PX_OK)
     {
       return PX_FAIL;
     }
 
     if (mask.getPtr() != NULL)
     {
-      if (mask->bindGLTextureAsMask(mMaskLoc) != PX_OK)
+      if (mask->bindGLTextureAsMask() != PX_OK)
       {
         return PX_FAIL;
       }
     }
 
-
-    glVertexAttribPointer(mPosLoc, 2, GL_FLOAT, GL_FALSE, 0, pos);
-    glVertexAttribPointer(mUVLoc, 2, GL_FLOAT, GL_FALSE, 0, uv);
-    glEnableVertexAttribArray(mPosLoc);
-    glEnableVertexAttribArray(mUVLoc);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, count);  TRACK_DRAW_CALLS();
-    glDisableVertexAttribArray(mPosLoc);
-    glDisableVertexAttribArray(mUVLoc);
 
     return PX_OK;
   }
@@ -1696,6 +1965,12 @@ private:
 
   GLint mTextureLoc;
   GLint mMaskLoc;
+
+  int mResW;
+  int mResH;
+  float mAlpha;
+  int mTexture;
+  int mMask;
 
 }; //CLASS - textureMaskedShaderProgram
 
@@ -2062,9 +2337,12 @@ void pxContext::init()
 
 void pxContext::setSize(int w, int h)
 {
-  glViewport(0, 0, (GLint)w, (GLint)h);
-  gResW = w;
-  gResH = h;
+    if (gResW != w || gResH != h)
+    {
+        glViewport(0, 0, (GLint)w, (GLint)h);
+        gResW = w;
+        gResH = h;
+    }
 
   if (currentFramebuffer == defaultFramebuffer)
   {
@@ -2173,10 +2451,13 @@ pxError pxContext::setFramebuffer(pxContextFramebufferRef fbo)
   currentGLProgram = PROGRAM_UNKNOWN;
   if (fbo.getPtr() == NULL || fbo->getTexture().getPtr() == NULL)
   {
-    glViewport ( 0, 0, defaultContextSurface.width, defaultContextSurface.height);
+      if (gResW != defaultContextSurface.width || gResH != defaultContextSurface.height)
+      {
+        glViewport ( 0, 0, defaultContextSurface.width, defaultContextSurface.height);
 
-    gResW = defaultContextSurface.width;
-    gResH = defaultContextSurface.height;
+        gResW = defaultContextSurface.width;
+        gResH = defaultContextSurface.height;
+      }
 
     // TODO probably need to save off the original FBO handle rather than assuming zero
     glBindFramebuffer(GL_FRAMEBUFFER, 0);  TRACK_FBO_CALLS();
